@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pub
+      POSTGRES_PASSWORD: pub
+      POSTGRES_DB: pub_system
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pub -d pub_system"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://pub:pub@db:5432/pub_system?schema=public
+      JWT_ACCESS_SECRET: docker-access-secret-change-me
+      JWT_REFRESH_SECRET: docker-refresh-secret-change-me
+      PORT: "4000"
+      NODE_ENV: production
+      CORS_ORIGIN: http://localhost:5173
+    ports:
+      - "4000:4000"
+    # Apply migrations, seed demo data on first boot, then serve.
+    command: sh -c "npx prisma migrate deploy && npx prisma db seed && node dist/index.js"
+
+  web:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:

@@ -1,0 +1,61 @@
+### Pub System API — quick smoke collection (VS Code REST Client / IntelliJ HTTP)
+@base = http://localhost:4000/api
+
+### Health
+GET {{base}}/health
+
+### Login (copy accessToken from the response into @token below)
+# @name login
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{ "username": "owner1", "password": "password123" }
+
+@token = {{login.response.body.accessToken}}
+
+### Who am I
+GET {{base}}/auth/me
+Authorization: Bearer {{token}}
+
+### Dashboard KPIs
+GET {{base}}/dashboard/kpis
+Authorization: Bearer {{token}}
+
+### Stock recommendations (the decision engine, live)
+GET {{base}}/dashboard/recommendations
+Authorization: Bearer {{token}}
+
+### Top drinks by gross profit
+GET {{base}}/reports/top-drinks?by=profit&limit=10
+Authorization: Bearer {{token}}
+
+### Bottom / slow movers
+GET {{base}}/reports/bottom-drinks
+Authorization: Bearer {{token}}
+
+### Sales report + P&L
+GET {{base}}/reports/sales
+Authorization: Bearer {{token}}
+
+### Products (with live margins)
+GET {{base}}/products
+Authorization: Bearer {{token}}
+
+### Ring up a sale (open order → sends to bar)
+# @name sale
+POST {{base}}/sales
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "items": [ { "productId": 1, "quantity": 2 }, { "productId": 6, "quantity": 1 } ] }
+
+### Pay that sale (split cash + mobile money)
+POST {{base}}/sales/{{sale.response.body.id}}/pay
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "payments": [ { "method": "CASH", "amount": 500 }, { "method": "MOBILE_MONEY", "amount": 800 } ] }
+
+### Low-stock alerts
+GET {{base}}/dashboard/alerts
+Authorization: Bearer {{token}}

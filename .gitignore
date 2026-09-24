@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+build/
+frontend/dist/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Logs & misc
+*.log
+npm-debug.log*
+.DS_Store
+coverage/

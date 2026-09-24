@@ -1,0 +1,6 @@
+# Keep line endings stable across Windows/macOS/Linux checkouts:
+# store text as LF in the repo and check it out as LF everywhere.
+* text=auto eol=lf
+
+# Lockfiles are generated — collapse them in diffs and merges.
+package-lock.json -diff linguist-generated
