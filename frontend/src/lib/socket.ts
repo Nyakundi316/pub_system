@@ -1,5 +1,8 @@
 import { io, type Socket } from 'socket.io-client';
 
+/** Serverless hosting has no Socket.IO server; the app then polls health instead. */
+export const realtimeEnabled = import.meta.env.VITE_REALTIME !== 'false';
+
 // Lazily-created shared socket. The bar display and floor views subscribe to the
 // same domain events the API publishes (order.created / paid / void).
 let socket: Socket | null = null;

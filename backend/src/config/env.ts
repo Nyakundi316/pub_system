@@ -2,8 +2,11 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const isProduction = process.env.NODE_ENV === 'production';
+
+/** Dev fallbacks are for localhost only — in production a missing secret is fatal. */
 function required(name: string, fallback?: string): string {
-  const value = process.env[name] ?? fallback;
+  const value = process.env[name] ?? (isProduction ? undefined : fallback);
   if (value === undefined) {
     throw new Error(`Missing required environment variable: ${name}`);
   }

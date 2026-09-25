@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Menu, LogOut, Search, Bell, Wifi, WifiOff, CloudUpload, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../../store/auth';
 import { api } from '../../lib/api';
-import { getSocket } from '../../lib/socket';
+import { getSocket, realtimeEnabled } from '../../lib/socket';
 import { useOutbox, startOutboxSync, flushOutbox, retryQueued, discardQueued } from '../../lib/outbox';
 import { money } from '../../lib/format';
 import { NAV } from './nav';
@@ -151,12 +151,34 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => startOutboxSync(), []);
 
   useEffect(() => {
-    const socket = getSocket();
     const up = () => {
       setOnline(true);
       void flushOutbox(); // the API is back — don't wait for the heartbeat
     };
     const down = () => setOnline(false);
+
+    if (!realtimeEnabled) {
+      // No socket to watch — ask the API directly, and react to the browser's own signal.
+      let wasUp = true;
+      const probe = async () => {
+        const ok = navigator.onLine && (await fetch('/api/health', { cache: 'no-store' }).then((r) => r.ok, () => false));
+        if (ok && !wasUp) up();
+        else if (!ok) down();
+        else setOnline(true);
+        wasUp = ok;
+      };
+      void probe();
+      const timer = window.setInterval(probe, 30_000);
+      window.addEventListener('online', probe);
+      window.addEventListener('offline', probe);
+      return () => {
+        window.clearInterval(timer);
+        window.removeEventListener('online', probe);
+        window.removeEventListener('offline', probe);
+      };
+    }
+
+    const socket = getSocket();
     socket.on('connect', up);
     socket.on('disconnect', down);
     setOnline(socket.connected);
