@@ -114,6 +114,29 @@ curl -s localhost:4000/api/auth/login -H "Content-Type: application/json" \
   -d '{"username":"owner1","password":"password123"}'
 ```
 
+## Deploying (Vercel + Supabase)
+
+Production runs as two Vercel projects on the same repo, with Postgres on Supabase:
+
+| Project | Root | What it serves |
+|---|---|---|
+| `pub-system` | `frontend/` | The SPA. `vercel.json` proxies `/api/*` to the API, so the browser stays same-origin |
+| `pub-system-api` | `backend/` | The Express app as a single function (`api/index.ts`) in `dub1`, next to the Supabase `eu-west-1` database |
+
+Vercel functions can't hold Socket.IO connections open, so the frontend is built
+with `VITE_REALTIME=false`. It then polls `/api/health` for its online/offline
+status, and live order events fall back to refetching.
+
+Environment variables for `pub-system-api` (production):
+
+- `DATABASE_URL`: the Supabase **transaction pooler** string (port 6543) with
+  `?pgbouncer=true&connection_limit=1` appended
+- `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`: long random strings. With
+  `NODE_ENV=production` the API refuses to start without them.
+
+Run migrations from your machine against the database's direct connection:
+`DATABASE_URL=<direct url> npx prisma migrate deploy`.
+
 ## Testing
 
 ```bash
