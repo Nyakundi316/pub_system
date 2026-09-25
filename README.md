@@ -28,7 +28,7 @@ A few professional decisions were made where the brief left room:
   deducts stock through the same recipe path — no special cases.
 - **Tax is added on top** of tax-exclusive menu prices; a sale-level discount is
   apportioned across the taxable base before tax.
-- **Realtime, offline-sync, PDF/Excel export and payment/printer hardware** are
+- **Realtime, PDF/Excel export and payment/printer hardware** are
   built as clean seams (`lib/events.ts`, `lib/hardware.ts`) with working stubs,
   not faked as complete. See [Status](#status--what-is-and-isnt-built).
 
@@ -177,6 +177,26 @@ All routes are under `/api`, all mutations enforce a permission and write an
 
 See [`backend/api.http`](backend/api.http) for a ready-to-run request collection.
 
+## Offline POS
+
+The till keeps selling when the API is unreachable:
+
+- The menu and open tabs are cached from their last successful load.
+- A sale that gets no response (or a 502/503/504 from the proxy) goes into an
+  IndexedDB outbox. It is replayed on reconnect and on a 20s heartbeat.
+- Every sale carries a till-minted `clientRef`, unique in `sales`. A replay whose
+  first response was lost returns the stored sale (`replayed: true`). It does
+  not create a second sale, and stock is not deducted twice.
+- `soldAt` keeps the real time of sale. The sale, its stock movements and its
+  payments are all backdated, and the sale is booked to the shift that was open
+  at that moment. Times over 2 minutes in the future or more than 72h old are
+  rejected (`domain/offlineSync.ts`).
+- Charging an order creates the sale and its payment in **one** transaction, so
+  an unpaid order is never left behind.
+- Only the bartender who rang up a queued sale can replay it. Sales the server
+  rejects (e.g. the tab was closed meanwhile) are listed in the status bar, where
+  they can be retried or discarded.
+
 ## Status — what is and isn't built
 
 | Area | Status |
@@ -195,7 +215,8 @@ See [`backend/api.http`](backend/api.http) for a ready-to-run request collection
 | Realtime (Socket.IO) | ✅ API publishes; app shows live connection + reacts to order events |
 | Reports export | ✅ CSV + browser Print/PDF; server-side PDF/Excel ⏳ |
 | Hardware (printer, terminal, flow meter, scale) | ⚙️ Interfaces + mocks |
-| Offline POS sync, multi-branch | ⏳ Designed-for, not yet built |
+| Offline POS sync | ✅ IndexedDB outbox, idempotent replay (`clientRef`), original sale time kept |
+| Multi-branch | ⏳ Designed-for, not yet built |
 
 ## License
 

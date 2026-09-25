@@ -14,6 +14,7 @@ interface MovementInput {
   userId?: number;
   shiftId?: number;
   notes?: string;
+  at?: Date; // backdate the ledger row, e.g. a sale synced after the fact
 }
 
 /**
@@ -40,6 +41,7 @@ export async function applyStockMovement(tx: Tx, input: MovementInput) {
       userId: input.userId,
       shiftId: input.shiftId,
       notes: input.notes,
+      createdAt: input.at,
     },
   });
 

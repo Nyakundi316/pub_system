@@ -266,6 +266,8 @@ model Sale {
   totalAmount    Decimal    @default(0) @map("total_amount") @db.Decimal(14, 4)
   status         SaleStatus @default(OPEN)
   voidReason     String?    @map("void_reason")
+  // Idempotency key minted by the till. An offline sale replayed twice lands once.
+  clientRef      String?    @unique @map("client_ref")
 
   items               SaleItem[]
   payments            Payment[]

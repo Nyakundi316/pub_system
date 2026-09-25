@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Minus, Trash2, Send, CreditCard, ShoppingBag, Check } from 'lucide-react';
-import { api, apiError } from '../lib/api';
-import { useGet } from '../hooks/api';
+import { apiError } from '../lib/api';
+import { useCachedGet } from '../hooks/api';
+import { newClientRef, submitSale } from '../lib/outbox';
 import { useAuth } from '../store/auth';
 import { usePos, posTotals } from '../store/pos';
 import { Button, Field, Input, Modal, Select, Spinner, cx } from '../components/ui';
@@ -25,9 +26,9 @@ export default function Pos() {
   const [mobileOrder, setMobileOrder] = useState(false);
   const [flash, setFlash] = useState<string>('');
 
-  const products = useGet<Product[]>('/products', { active: true });
-  const categories = useGet<Category[]>('/product-categories');
-  const tabs = useGet<OpenTab[]>('/tabs', { status: 'OPEN' });
+  const products = useCachedGet<Product[]>('/products', { active: true });
+  const categories = useCachedGet<Category[]>('/product-categories');
+  const tabs = useCachedGet<OpenTab[]>('/tabs', { status: 'OPEN' });
 
   const shown = useMemo(() => {
     let list = products.data ?? [];
@@ -38,33 +39,42 @@ export default function Pos() {
 
   const totals = posTotals(pos.lines, pos.discount);
 
+  // A fresh clientRef per attempt: the outbox reuses it on replay, the server dedupes on it.
   const buildPayload = () => ({
+    clientRef: newClientRef(),
+    soldAt: new Date().toISOString(),
     tabId: pos.tabId ?? undefined,
     customerId: pos.customerId ?? undefined,
     discountAmount: pos.discount || undefined,
     items: pos.lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
   });
 
+  // networkMode 'always': react-query would otherwise pause the mutation offline
+  // instead of letting submitSale fall through to the outbox.
   const sendToBar = useMutation({
-    mutationFn: async () => (await api.post('/sales', buildPayload())).data,
-    onSuccess: () => {
+    networkMode: 'always',
+    mutationFn: () => submitSale(buildPayload(), totals.total),
+    onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['/tabs', {}] });
-      setFlash('Order sent to the bar');
+      setFlash(res.queued ? 'Offline — order saved, will sync' : 'Order sent to the bar');
       pos.clear();
       setMobileOrder(false);
     },
   });
 
+  // Sale + payment in one call, so a dropped connection can't leave an unpaid order behind.
   const settle = useMutation({
+    networkMode: 'always',
     mutationFn: async (payments: { method: string; amount: number }[]) => {
-      const sale = (await api.post('/sales', buildPayload())).data;
-      const res = (await api.post(`/sales/${sale.id}/pay`, { payments })).data;
-      return res as { change: number };
+      const res = await submitSale({ ...buildPayload(), payments }, totals.total);
+      const change = res.queued ? payments.reduce((sum, p) => sum + p.amount, 0) - totals.total : res.change ?? 0;
+      return { queued: res.queued, change };
     },
-    onSuccess: (res) => {
+    onSuccess: ({ queued, change }) => {
       qc.invalidateQueries({ queryKey: ['/tabs', {}] });
       qc.invalidateQueries({ queryKey: ['/dashboard/kpis', {}] });
-      setFlash(res.change > 0 ? `Paid · change ${money(res.change, true)}` : 'Payment complete');
+      const due = change > 0.004 ? ` · change ${money(change, true)}` : '';
+      setFlash(queued ? `Offline — paid, will sync${due}` : due ? `Paid${due}` : 'Payment complete');
       pos.clear();
       setPayOpen(false);
       setMobileOrder(false);
@@ -236,8 +246,9 @@ function CategoryChip({ active, label, onClick }: { active: boolean; label: stri
 function PaymentModal({ open, onClose, total, onConfirm, pending }: { open: boolean; onClose: () => void; total: number; onConfirm: (p: { method: string; amount: number }[]) => void; pending: boolean }) {
   const [method, setMethod] = useState('CASH');
   const [tendered, setTendered] = useState<number | ''>('');
-  const amount = tendered === '' ? total : Number(tendered);
-  const change = Math.max(0, amount - total);
+  const exact = Math.round((total + 1e-9) * 100) / 100; // cents, half-up — what the API will ask for
+  const amount = tendered === '' ? exact : Number(tendered);
+  const change = Math.max(0, amount - exact);
 
   return (
     <Modal open={open} onClose={onClose} title="Take payment">
@@ -257,7 +268,7 @@ function PaymentModal({ open, onClose, total, onConfirm, pending }: { open: bool
           <Input type="number" min={0} value={tendered} onChange={(e) => setTendered(e.target.value === '' ? '' : Number(e.target.value))} placeholder={String(total.toFixed(2))} />
         </Field>
         {method === 'CASH' && change > 0 && <p className="text-sm text-pour-green">Change due: {money(change, true)}</p>}
-        <Button className="w-full" loading={pending} disabled={amount < total} onClick={() => onConfirm([{ method, amount: Math.max(amount, total) }])}>
+        <Button className="w-full" loading={pending} disabled={amount < exact} onClick={() => onConfirm([{ method, amount }])}>
           Confirm payment
         </Button>
       </div>

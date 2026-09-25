@@ -56,6 +56,19 @@ Content-Type: application/json
 
 { "payments": [ { "method": "CASH", "amount": 500 }, { "method": "MOBILE_MONEY", "amount": 800 } ] }
 
+### Replay an offline sale (idempotent: send it twice, it lands once)
+# clientRef is minted by the till; soldAt is when it was actually rung up.
+POST {{base}}/sales
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "clientRef": "5f0c2a8e-3b7d-4c1e-9a2f-6d8b1e4c7a90",
+  "soldAt": "2026-09-25T20:15:00Z",
+  "items": [ { "productId": 1, "quantity": 2 } ],
+  "payments": [ { "method": "CASH", "amount": 1000 } ]
+}
+
 ### Low-stock alerts
 GET {{base}}/dashboard/alerts
 Authorization: Bearer {{token}}

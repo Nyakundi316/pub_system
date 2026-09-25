@@ -1,9 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Menu, LogOut, Search, Bell, Wifi, WifiOff } from 'lucide-react';
+import { Menu, LogOut, Search, Bell, Wifi, WifiOff, CloudUpload, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../../store/auth';
 import { api } from '../../lib/api';
 import { getSocket } from '../../lib/socket';
+import { useOutbox, startOutboxSync, flushOutbox, retryQueued, discardQueued } from '../../lib/outbox';
+import { money } from '../../lib/format';
 import { NAV } from './nav';
 import { cx } from '../ui';
 
@@ -44,6 +46,76 @@ function SideNav({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+function sinceLabel(then: Date, now: Date) {
+  const mins = Math.floor((now.getTime() - then.getTime()) / 60_000);
+  return mins < 1 ? 'just now' : mins < 60 ? `${mins}m ago` : `at ${then.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+/** What the till's offline queue is doing, and a way to deal with anything the server bounced. */
+function SyncStatus({ now }: { now: Date }) {
+  const { entries, syncing, lastSyncedAt } = useOutbox();
+  const [open, setOpen] = useState(false);
+  const [armed, setArmed] = useState<string | null>(null); // Discard takes two taps — it throws a sale away
+  const pending = entries.filter((e) => e.state === 'pending').length;
+  const failed = entries.filter((e) => e.state === 'failed');
+
+  useEffect(() => {
+    if (!failed.length) setOpen(false);
+  }, [failed.length]);
+
+  return (
+    <div className="relative flex items-center gap-3">
+      {pending > 0 ? (
+        <button onClick={() => flushOutbox()} className="flex items-center gap-1 text-amber-400 hover:text-amber-300" title="Sync now">
+          {syncing ? <RefreshCw size={12} className="animate-spin" /> : <CloudUpload size={12} />}
+          {pending} {pending === 1 ? 'sale' : 'sales'} waiting to sync
+        </button>
+      ) : (
+        <span className="hidden sm:inline">{lastSyncedAt ? `Synced ${sinceLabel(lastSyncedAt, now)}` : 'All sales synced'}</span>
+      )}
+
+      {failed.length > 0 && (
+        <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1 rounded bg-pour-red/15 px-1.5 py-0.5 font-medium text-pour-red">
+          <AlertTriangle size={12} /> {failed.length} need attention
+        </button>
+      )}
+
+      {open && (
+        <div className="absolute bottom-7 left-0 z-50 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-white/10 bg-ink-800 p-3 text-xs text-chalk-300 shadow-rail animate-slide-up">
+          <p className="mb-2 text-chalk-500">
+            These offline sales were rejected when they synced, so they're not in the books or the stock count yet.
+          </p>
+          <ul className="max-h-64 space-y-2 overflow-y-auto">
+            {failed.map((e) => (
+              <li key={e.clientRef} className="rounded-lg bg-ink-900/60 p-2">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-semibold text-chalk-100">{money(e.total, true)}</span>
+                  <span className="text-chalk-500">
+                    {new Date(e.payload.soldAt).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}
+                    {e.payload.payments ? ' · paid' : ' · to bar'}
+                    {e.payload.tabId ? ` · Tab #${e.payload.tabId}` : ''}
+                  </span>
+                </div>
+                <p className="mt-1 text-pour-red">{e.error}</p>
+                <div className="mt-2 flex justify-end gap-3">
+                  <button
+                    onClick={() => (armed === e.clientRef ? discardQueued(e.clientRef) : setArmed(e.clientRef))}
+                    onBlur={() => setArmed(null)}
+                    className={armed === e.clientRef ? 'font-medium text-pour-red' : 'text-chalk-500 hover:text-pour-red'}
+                  >
+                    {armed === e.clientRef ? 'Tap again to discard' : 'Discard'}
+                  </button>
+                  <button onClick={() => retryQueued(e.clientRef)} className="font-medium text-amber-400 hover:text-amber-300">Retry</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatusBar({ online }: { online: boolean }) {
   const [now, setNow] = useState(new Date());
   const user = useAuth((s) => s.user);
@@ -58,7 +130,7 @@ function StatusBar({ online }: { online: boolean }) {
           {online ? <Wifi size={12} /> : <WifiOff size={12} />}
           {online ? 'Connected' : 'Offline'}
         </span>
-        <span className="hidden sm:inline">Synced just now</span>
+        <SyncStatus now={now} />
       </div>
       <div className="flex items-center gap-4">
         <span>{user?.name} · {user?.roleName}</span>
@@ -76,10 +148,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [online, setOnline] = useState(true);
 
   useEffect(() => setDrawer(false), [location.pathname]);
+  useEffect(() => startOutboxSync(), []);
 
   useEffect(() => {
     const socket = getSocket();
-    const up = () => setOnline(true);
+    const up = () => {
+      setOnline(true);
+      void flushOutbox(); // the API is back — don't wait for the heartbeat
+    };
     const down = () => setOnline(false);
     socket.on('connect', up);
     socket.on('disconnect', down);
